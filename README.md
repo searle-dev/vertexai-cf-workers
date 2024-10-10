@@ -1,28 +1,54 @@
 # vertexai-cf-workers
 
-## Prerequisites
-1. Sign up for a GCP account:
-   - Go to [https://cloud.google.com/vertex-ai](https://cloud.google.com/vertex-ai) and sign up for a GCP account.
-   - You can get $150 free credits without a credit card, or $300 free credits by providing a credit card. (Note that the free credits expire in 90 days)
+## 前提条件
+1. 注册GCP账户：
+   - 访问 [https://cloud.google.com/vertex-ai](https://cloud.google.com/vertex-ai) 并注册GCP账户。
+   - 您可以获得150美元的免费额度（无需信用卡），或者提供信用卡信息获得300美元的免费额度。（请注意，免费额度将在90天后过期）
 
-2. Enable Vertex AI API:
-   - Go to [https://console.cloud.google.com/marketplace/product/google/aiplatform.googleapis.com](https://console.cloud.google.com/marketplace/product/google/aiplatform.googleapis.com) to enable the Vertex AI API for your project.
+2. 启用Vertex AI API：
+   - 访问 [https://console.cloud.google.com/marketplace/product/google/aiplatform.googleapis.com](https://console.cloud.google.com/marketplace/product/google/aiplatform.googleapis.com) 为您的项目启用Vertex AI API。
    
-3. Apply for Claude models:
-   - Go to [https://console.cloud.google.com/vertex-ai](https://console.cloud.google.com/vertex-ai) and apply for access to the Claude models.
+3. 申请使用Claude模型：
+   - 访问 [https://console.cloud.google.com/vertex-ai](https://console.cloud.google.com/vertex-ai) 并申请访问Claude模型。
 
-4. Create a [Service Account](https://console.cloud.google.com/projectselector/iam-admin/serviceaccounts/create?walkthrough_id=iam--create-service-account#step_index=1):
-   - Select the project ID you created earlier.
-   - Make sure to grant the role of "Vertex AI User" or "Vertex AI Administrator" to the service account.
-   - On the service account page you just created, go to the "Keys" tab and click "Add Key".
-   - Select "Create new key" and choose "JSON" as the key type.
-   - The key file will be downloaded automatically. This file contains the required variables for the worker, such as project_id, private_key, and client_email.
+4. 创建[服务账户](https://console.cloud.google.com/projectselector/iam-admin/serviceaccounts/create?walkthrough_id=iam--create-service-account#step_index=1)：
+   - 选择您之前创建的项目ID。
+   - 确保为服务账户授予"Vertex AI User"或"Vertex AI Administrator"角色。
+   - 在您刚刚创建的服务账户页面，转到"密钥"标签页并点击"添加密钥"。
+   - 选择"创建新密钥"并选择"JSON"作为密钥类型。
+   - 密钥文件将自动下载。该文件包含worker所需的变量，如project_id、private_key和client_email。
    
-## Workers Variables
+## Worker变量
 
-The worker requires several environment variables to be set:
+worker需要设置以下几个环境变量：
 
-- `CLIENT_EMAIL`: This is the email associated with your GCP service account. You can find this in your service account's JSON key file.
-- `PRIVATE_KEY`: This is the private key associated with your GCP service account. You can find this in your service account's JSON key file.
-- `PROJECT`: This is the ID of your GCP project. You can find this in your service account's JSON key file.
-- `API_KEY`: This is a string that you define. It is used to authenticate requests to the worker.
+- `CLIENT_EMAIL`：这是与您的GCP服务账户关联的电子邮件。您可以在服务账户的JSON密钥文件中找到它。
+- `PRIVATE_KEY`：这是与您的GCP服务账户关联的私钥。您可以在服务账户的JSON密钥文件中找到它。
+- `PROJECT`：这是您的GCP项目的ID。您可以在服务账户的JSON密钥文件中找到它。
+- `API_KEY`：这是您自定义的字符串。它用于验证对worker的请求。
+
+
+
+## 接口使用说明
+
+本worker支持两种API风格：OpenAI风格和Claude风格。您可以根据自己的需求选择使用其中一种。
+
+支持以下路径：
+ `/v1/chat/completions`、`/v1/v1/chat/completions`、`/v1/messages`、`/v1/v1/messages`、`/messages`
+
+### OpenAI风格
+
+1. 发送POST请求到worker的URL。
+2. 在请求头中设置：
+   - `Content-Type: application/json`
+   - `Authorization: Bearer YOUR_API_KEY`（将YOUR_API_KEY替换为您设置的API_KEY）
+
+### Claude风格
+
+1. 发送POST请求到worker的URL。
+2. 在请求头中设置：
+   - `Content-Type: application/json`
+   - `x-api-key: YOUR_API_KEY`（将YOUR_API_KEY替换为您设置的API_KEY）
+
+注意：请确保在使用API时遵守相关的使用条款和隐私政策。
+
