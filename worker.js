@@ -1,35 +1,47 @@
 const MODELS = {
     "claude-3-opus": {
         vertexName: "claude-3-opus@20240229",
-        region: "us-east5",
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
     },
     "claude-3-sonnet": {
-        vertexName: "claude-3-sonnet@20240229",
-        region: "us-central1",
+        vertexName: "claude-3-sonnet@20240229", 
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
     },
     "claude-3-haiku": {
         vertexName: "claude-3-haiku@20240307",
-        region: "us-central1",
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
     },
     "claude-3-5-sonnet": {
         vertexName: "claude-3-5-sonnet@20240620",
-        region: "us-east5",
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
     },
     "claude-3-opus-20240229": {
         vertexName: "claude-3-opus@20240229",
-        region: "us-east5",
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
     },
     "claude-3-sonnet-20240229": {
         vertexName: "claude-3-sonnet@20240229",
-        region: "us-central1",
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
     },
     "claude-3-haiku-20240307": {
         vertexName: "claude-3-haiku@20240307",
-        region: "us-central1",
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
     },
     "claude-3-5-sonnet-20240620": {
         vertexName: "claude-3-5-sonnet@20240620",
-        region: "us-east5",
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
+    },
+    "claude-3-5-sonnet-v2": {
+        vertexName: "claude-3-5-sonnet-v2@20241022",
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
+    },
+    "claude-3-5-sonnet-v2-20241022": {
+        vertexName: "claude-3-5-sonnet-v2@20241022",
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
+    },
+    "claude-3-5-sonnet-v2@20241022": {
+        vertexName: "claude-3-5-sonnet-v2@20241022",
+        regions: ["asia-southeast1", "europe-west1", "us-east5"],
     },
 };
 var apiFormat;
@@ -55,17 +67,21 @@ async function handleRequest(request) {
         var apiKey = request.headers.get("x-api-key");
     } else {
         apiFormat = "openai";
-        var apiKey = request.headers.get("Authorization").slice(7);
+        var authHeader = request.headers.get("Authorization");
+        if (!authHeader || !authHeader.startsWith("Bearer ")) {
+            return createErrorResponse(401, "authentication_error", "Missing or invalid Authorization header");
+        }
+        var apiKey = authHeader.slice(7);
     }
     if (!API_KEY || API_KEY !== apiKey) {
-        return createErrorResponse(401, "authentication_error", "invalid x-api-key");
+        return createErrorResponse(401, "authentication_error", "Invalid API key");
     }
 
     const signedJWT = await createSignedJWT(CLIENT_EMAIL, PRIVATE_KEY)
     const [token, err] = await exchangeJwtForAccessToken(signedJWT)
     if (token === null) {
         console.log(`Invalid jwt token: ${err}`)
-        return createErrorResponse(500, "api_error", "invalid authentication credentials");
+        return createErrorResponse(500, "api_error", "Invalid authentication credentials");
     }
 
     try {
@@ -88,10 +104,6 @@ async function handleRequest(request) {
 }
  
 async function handleMessagesEndpoint(request, api_token) {
-    const anthropicVersion = request.headers.get('anthropic-version');
-    if (anthropicVersion && anthropicVersion !== '2023-06-01' && apiFormat === 'claude') {
-        return createErrorResponse(400, "invalid_request_error", "API version not supported");
-    }
 
     let payload;
     try {
@@ -102,7 +114,7 @@ async function handleMessagesEndpoint(request, api_token) {
 
     payload.anthropic_version = "vertex-2023-10-16";
     
-    payload = convertPayloadFormat(payload, apiFormat);
+    payload = await convertPayloadFormat(payload, apiFormat); // 修改为异步函数
     if (!payload.max_tokens) {
         payload.max_tokens = 4000;
     }
@@ -115,7 +127,9 @@ async function handleMessagesEndpoint(request, api_token) {
 
     const stream = payload.stream || false;
     const model = MODELS[payload.model];
-    const url = `https://${model.region}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${model.region}/publishers/anthropic/models/${model.vertexName}:streamRawPredict`;
+    // 随机选择一个region
+    const region = model.regions[Math.floor(Math.random() * model.regions.length)];
+    const url = `https://${region}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${region}/publishers/anthropic/models/${model.vertexName}:streamRawPredict`;
     delete payload.model;
 
     let response, contentType
@@ -145,44 +159,50 @@ async function handleMessagesEndpoint(request, api_token) {
             transform(chunk, controller) {
                 let decoded = decoder.decode(chunk, { stream: true });
                 buffer += decoded;
-                let eventList = buffer.split(/\r\n\r\n|\r\r|\n\n/g);
-                if (eventList.length === 0) return;
-                buffer = eventList.pop();
+                let eventList = buffer.split(/\r?\n\r?\n/);
+                buffer = eventList.pop(); // 保留未完成的部分
                 
-                let stop = false;
                 for (let event of eventList) {
                     if (apiFormat === "openai") {
-                        const eventMatch = event.match(/event:(.+?)\n/);
-                        if (eventMatch[1].trim() === 'content_block_stop') {
-                            stop = true;
+                        const lines = event.split('\n');
+                        let eventData = {};
+                        for (const line of lines) {
+                            const [key, value] = line.split(/:(.+)/);
+                            if (key && value) {
+                                eventData[key.trim()] = value.trim();
+                            }
                         }
-
-                        if (eventMatch[1].trim() === "content_block_delta") {
-                            const dataMatch = event.match(/data:(.+)$/);
-                            let chunk_data = JSON.parse(dataMatch[1]);
-
+                        if (eventData.event === "content_block_end") {
+                            controller.enqueue(encoder.encode(`data: [DONE]\n\n`));
+                            controller.close();
+                        } else if (eventData.event === "content_block_delta") {
+                            const dataContent = JSON.parse(eventData.data);
+                            let deltaContent = dataContent.delta.text || '';
+                            
                             let transformedData = {
-                                id: '01234567-890a-bcde-f012-34567890abcd',
+                                id: dataContent.request_id || `chatcmpl-${Math.random().toString(36).substr(2, 9)}`,
                                 object: 'chat.completion.chunk',
                                 created: Math.floor(Date.now() / 1000),
-                                model: payload.model, // 使用原始请求体中的model字段
-                                system_fingerprint: 'vertexai-cf-workers-123456789',
+                                model: payload.model,
                                 choices: [{
-                                index: 0,
-                                delta: { content: chunk_data.delta.text },
-                                logprobs: null,
-                                finish_reason: ''
+                                    index: 0,
+                                    delta: { content: deltaContent },
+                                    finish_reason: null
                                 }]
                             };
                             controller.enqueue(encoder.encode(`data: ${JSON.stringify(transformedData)}\n\n`));
-                        } else {
-                            continue;
                         }
                     } else {
+                        // 对于 Claude 格式，直接转发
                         controller.enqueue(encoder.encode(`${event}\n\n`));
                     }                    
                 }
             },
+            flush(controller) {
+                if (buffer) {
+                    controller.enqueue(encoder.encode(buffer));
+                }
+            }
         });
         response.body.pipeTo(writable);
         return new Response(readable, {
@@ -196,28 +216,31 @@ async function handleMessagesEndpoint(request, api_token) {
         try {
             let data = await response.json();
             if (apiFormat === "openai") {
+                // 修改这里以正确提取 Claude API 返回的内容
+                let content = "";
+                if (data.content && data.content.length > 0) {
+                    content = data.content.map(item => item.text).join('');
+                } else if (data.completion) {
+                    content = data.completion;
+                }
+
                 const transformedData = {
                     id: data.id || `chatcmpl-${Math.random().toString(36).substr(2, 9)}`,
                     object: "chat.completion",
                     created: Math.floor(Date.now() / 1000),
-                    model: data.model || payload.model,
-                    system_fingerprint: `fp_${Math.random().toString(36).substr(2, 8)}`,
+                    model: payload.model, // 使用原始请求体中的 model
                     choices: [{
                         index: 0,
                         message: {
-                            role: data.role || "assistant",
-                            content: data.content[0]?.text || "",
+                            role: "assistant",
+                            content: content,
                         },
-                        logprobs: null,
-                        finish_reason: data.stop_reason || "stop"
+                        finish_reason: mapStopReason(data.stop_reason)
                     }],
                     usage: {
                         prompt_tokens: data.usage?.input_tokens || 0,
                         completion_tokens: data.usage?.output_tokens || 0,
-                        total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0),
-                        completion_tokens_details: {
-                            reasoning_tokens: 0
-                        }
+                        total_tokens: (data.usage?.input_tokens || 0) + (data.usage?.output_tokens || 0)
                     }
                 };
                 return new Response(JSON.stringify(transformedData), {
@@ -243,32 +266,51 @@ async function handleMessagesEndpoint(request, api_token) {
     }
 }
 
-function convertPayloadFormat(payload, apiFormat) {
+function mapStopReason(stopReason) {
+    switch (stopReason) {
+        case "stop_sequence":
+            return "stop";
+        case "max_tokens":
+            return "length";
+        default:
+            return null;
+    }
+}
+
+async function convertPayloadFormat(payload, apiFormat) {
     if (apiFormat === "openai") {
         const convertedPayload = {
-            ...payload,
-            messages: []
+            messages: [],
+            model: payload.model,
+            max_tokens: payload.max_tokens,
+            temperature: payload.temperature,
+            top_p: payload.top_p,
+            stream: payload.stream,
+            stop_sequences: payload.stop,
+            anthropic_version: "vertex-2023-10-16" // 添加 Claude 所需的版本参数
         };
+
+        // 处理 system 消息
+        const systemMessage = payload.messages.find(msg => msg.role === "system");
+        if (systemMessage) {
+            convertedPayload.system = systemMessage.content;
+        }
+
+        // 处理其他消息
         for (const message of payload.messages) {
-            if (message.role === "system") {
-                // 如果 message.role 为 "system",将 message.content 赋值给 payload.system,并跳过这个 message
-                convertedPayload.system = message.content;
-                continue;
-            }
-            
+            if (message.role === "system") continue; // 已经处理过了
+
             const convertedMessage = {
                 role: message.role,
                 content: []
             };
-            // 判断 message.content 的类型是否为字符串
+
             if (typeof message.content === "string") {
-                // 如果是字符串,直接将其作为文本类型添加到 convertedMessage.content 数组中
                 convertedMessage.content.push({
                     type: "text",
                     text: message.content
                 });
-            } else {
-                // 如果不是字符串,则认为它是一个数组,遍历数组中的每个 content 对象
+            } else if (Array.isArray(message.content)) {
                 for (const content of message.content) {
                     if (content.type === "text") {
                         convertedMessage.content.push({
@@ -276,13 +318,14 @@ function convertPayloadFormat(payload, apiFormat) {
                             text: content.text
                         });
                     } else if (content.type === "image_url") {
-                        const [mediaType, imageData] = content.image_url.url.split(";base64,");
+                        // 下载并编码图像
+                        const base64Data = await downloadAndEncodeImage(content.image_url.url);
                         convertedMessage.content.push({
                             type: "image",
                             source: {
                                 type: "base64",
-                                media_type: mediaType.split(":")[1],
-                                data: imageData
+                                media_type: "image/png", // 根据实际情况设置
+                                data: base64Data
                             }
                         });
                     }
@@ -290,13 +333,41 @@ function convertPayloadFormat(payload, apiFormat) {
             }
             convertedPayload.messages.push(convertedMessage);
         }
+
+        // 处理 tools/functions
+        if (payload.functions || payload.tools) {
+            convertedPayload.tools = payload.functions || payload.tools;
+        }
+
+        // 移除所有未定义的属性
+        Object.keys(convertedPayload).forEach(key => 
+            convertedPayload[key] === undefined && delete convertedPayload[key]
+        );
+
         return convertedPayload;
     }
     return payload;
 }
 
+async function downloadAndEncodeImage(url) {
+    const response = await fetch(url);
+    if (!response.ok) {
+        throw new Error(`Unable to download image: ${response.statusText}`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    const base64String = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+    return base64String;
+}
+
 function createErrorResponse(status, errorType, message) {
-    const errorObject = { type: "error", error: { type: errorType, message: message } };
+    const errorObject = {
+        error: {
+            message: message,
+            type: errorType,
+            param: null,
+            code: null
+        }
+    };
     return new Response(JSON.stringify(errorObject), {
         status: status,
         headers: {
@@ -362,7 +433,7 @@ async function exchangeJwtForAccessToken(signed_jwt) {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: Object.entries(params)
-            .map(([k, v]) => k + "=" + v)
+            .map(([k, v]) => encodeURIComponent(k) + "=" + encodeURIComponent(v))
             .join("&"),
     }).then((res) => res.json());
 
