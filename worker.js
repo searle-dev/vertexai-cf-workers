@@ -1,48 +1,75 @@
 const MODELS = {
     "claude-3-opus": {
-        vertexName: "claude-3-opus@20240229",
+        modelName: "claude-3-opus@20240229",
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
     "claude-3-sonnet": {
-        vertexName: "claude-3-sonnet@20240229", 
+        modelName: "claude-3-sonnet@20240229", 
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
     "claude-3-haiku": {
-        vertexName: "claude-3-haiku@20240307",
+        modelName: "claude-3-haiku@20240307",
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
     "claude-3-5-sonnet": {
-        vertexName: "claude-3-5-sonnet@20240620",
+        modelName: "claude-3-5-sonnet@20240620",
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
     "claude-3-opus-20240229": {
-        vertexName: "claude-3-opus@20240229",
+        modelName: "claude-3-opus@20240229",
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
     "claude-3-sonnet-20240229": {
-        vertexName: "claude-3-sonnet@20240229",
+        modelName: "claude-3-sonnet@20240229",
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
     "claude-3-haiku-20240307": {
-        vertexName: "claude-3-haiku@20240307",
+        modelName: "claude-3-haiku@20240307",
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
     "claude-3-5-sonnet-20240620": {
-        vertexName: "claude-3-5-sonnet@20240620",
+        modelName: "claude-3-5-sonnet@20240620",
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
     "claude-3-5-sonnet-v2": {
-        vertexName: "claude-3-5-sonnet-v2@20241022",
+        modelName: "claude-3-5-sonnet-v2@20241022",
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
     "claude-3-5-sonnet-v2-20241022": {
-        vertexName: "claude-3-5-sonnet-v2@20241022",
+        modelName: "claude-3-5-sonnet-v2@20241022",
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
     "claude-3-5-sonnet-v2@20241022": {
-        vertexName: "claude-3-5-sonnet-v2@20241022",
+        modelName: "claude-3-5-sonnet-v2@20241022",
         regions: ["asia-southeast1", "europe-west1", "us-east5"],
+        channel: "gcp"
     },
+    // "claude-3-5-sonnet-20241022":{
+    //     modelName: "claude-3-5-sonnet-20241022",
+    //     channel: "anthropic"
+    // },
+    "claude-3-5-sonnet-latest":{
+        modelName: "claude-3-5-sonnet-20241022",
+        channel: "newapi"
+    },
+    // "claude-3-5-haiku-20241022":{
+    //     modelName: "claude-3-5-haiku-20241022",
+    //     channel: "anthropic"
+    // },
+    "claude-3-5-haiku-latest":{
+        modelName: "claude-3-5-haiku-20241022",
+        channel: "newapi"
+    }
 };
 var apiFormat;
 
@@ -73,15 +100,34 @@ async function handleRequest(request) {
         }
         var apiKey = authHeader.slice(7);
     }
-    if (!API_KEY || API_KEY !== apiKey) {
+    if (!API_KEYS.includes(apiKey)) {
         return createErrorResponse(401, "authentication_error", "Invalid API key");
     }
 
-    const signedJWT = await createSignedJWT(CLIENT_EMAIL, PRIVATE_KEY)
-    const [token, err] = await exchangeJwtForAccessToken(signedJWT)
-    if (token === null) {
-        console.log(`Invalid jwt token: ${err}`)
-        return createErrorResponse(500, "api_error", "Invalid authentication credentials");
+    // 检查是否直接请求 Anthropic API 或 NEWAPI
+    let payload;
+    try {
+        payload = await request.json();
+    } catch (err) {
+        return createErrorResponse(400, "invalid_request_error", `The request body is not valid JSON: ${err.message}`);
+    }
+    const model = payload?.model;
+    console.log(`model: ${model}`);
+    const useAnthropicDirect = model && MODELS[model]?.channel === "anthropic";
+    const useNewApi = model && MODELS[model]?.channel === "newapi";
+    console.log(`useAnthropicDirect: ${useAnthropicDirect}`);
+    console.log(`useNewApi: ${useNewApi}`);
+    let token = null;
+    if (!useAnthropicDirect && !useNewApi) {
+        const signedJWT = await createSignedJWT(CLIENT_EMAIL, PRIVATE_KEY)
+        const [accessToken, err] = await exchangeJwtForAccessToken(signedJWT)
+        if (accessToken === null) {
+            console.log(`Invalid jwt token: ${err}`)
+            return createErrorResponse(500, "api_error", "Invalid authentication credentials");
+        }
+        token = accessToken;
+    } else {
+        token = apiKey;
     }
 
     try {
@@ -93,7 +139,7 @@ async function handleRequest(request) {
             case "/messages":
             case "/v1/chat/completions":
             case "/v1/v1/chat/completions":
-                return handleMessagesEndpoint(request, token);
+                return handleMessagesEndpoint(token,payload);
             default:
                 return createErrorResponse(404, "not_found_error", "Not Found");
         }
@@ -103,15 +149,8 @@ async function handleRequest(request) {
     }
 }
  
-async function handleMessagesEndpoint(request, api_token) {
-
-    let payload;
-    try {
-        payload = await request.json();
-    } catch (err) {
-        return createErrorResponse(400, "invalid_request_error", `The request body is not valid JSON: ${err.message}`);
-    }
-
+async function handleMessagesEndpoint(api_token,payload) {
+    
     payload.anthropic_version = "vertex-2023-10-16";
     
     payload = await convertPayloadFormat(payload, apiFormat); // 修改为异步函数
@@ -127,23 +166,54 @@ async function handleMessagesEndpoint(request, api_token) {
 
     const stream = payload.stream || false;
     const model = MODELS[payload.model];
-    // 随机选择一个region
-    const region = model.regions[Math.floor(Math.random() * model.regions.length)];
-    const url = `https://${region}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${region}/publishers/anthropic/models/${model.vertexName}:streamRawPredict`;
-    delete payload.model;
+    
+    let url;
+    let headers = {
+        'Content-Type': 'application/json'
+    };
+    
+    if (model.channel === "anthropic") {
+        // 使用 Anthropic 官方 API
+        url = 'https://api.anthropic.com/v1/messages';
+        headers['x-api-key'] = api_token;
+        headers['anthropic-version'] = '2023-06-01';
+        delete payload.anthropic_version;
+    } else if (model.channel === "newapi") {
+        // 使用 NEWAPI
+        url = NEWAPI_URL;
+        headers['Authorization'] = `Bearer ${api_token}`;
+    } else {
+        // 使用 Google Cloud API
+        const region = model.regions[Math.floor(Math.random() * model.regions.length)];
+        url = `https://${region}-aiplatform.googleapis.com/v1/projects/${PROJECT}/locations/${region}/publishers/anthropic/models/${model.modelName}:streamRawPredict`;
+        headers['Authorization'] = `Bearer ${api_token}`;
+        delete payload.model;
+    }
+    
 
     let response, contentType
     try {
+        console.log(`url: ${url}`);
+        console.log(`headers: ${JSON.stringify(headers)}`);
+        console.log(`payload: ${JSON.stringify(payload)}`);
         response = await fetch(url, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${api_token}`
-            },
+            headers: headers,
             body: JSON.stringify(payload)
         });
         contentType = response.headers.get("Content-Type") || "application/json";
+        
+        // 打印响应状态和头部信息
+        console.log(`Response status: ${response.status}`);
+        console.log(`Response headers:`, Object.fromEntries(response.headers));
+        
+        if (response.status === 429) {
+            console.log('Rate limit exceeded. Response:', await response.text());
+            return createErrorResponse(429, "rate_limit_error", "Too many requests. Please try again later.");
+        }
+        
     } catch (error) {
+        console.error("API request failed:", error);
         return createErrorResponse(500, "api_error", `Server Error: ${error.message}`);
     }
 
@@ -163,7 +233,7 @@ async function handleMessagesEndpoint(request, api_token) {
                 buffer = eventList.pop(); // 保留未完成的部分
                 
                 for (let event of eventList) {
-                    if (apiFormat === "openai") {
+                    if (apiFormat === "openai" && model.channel !== "newapi") {
                         const lines = event.split('\n');
                         let eventData = {};
                         for (const line of lines) {
@@ -193,7 +263,7 @@ async function handleMessagesEndpoint(request, api_token) {
                             controller.enqueue(encoder.encode(`data: ${JSON.stringify(transformedData)}\n\n`));
                         }
                     } else {
-                        // 对于 Claude 格式，直接转发
+                        // 对于 Claude 格式或 NEWAPI，直接转发
                         controller.enqueue(encoder.encode(`${event}\n\n`));
                     }                    
                 }
@@ -215,7 +285,9 @@ async function handleMessagesEndpoint(request, api_token) {
     } else {
         try {
             let data = await response.json();
-            if (apiFormat === "openai") {
+            console.log('Non-streaming response data:', data);
+            
+            if (apiFormat === "openai" && model.channel !== "newapi") {
                 // 修改这里以正确提取 Claude API 返回的内容
                 let content = "";
                 if (data.content && data.content.length > 0) {
@@ -278,7 +350,7 @@ function mapStopReason(stopReason) {
 }
 
 async function convertPayloadFormat(payload, apiFormat) {
-    if (apiFormat === "openai") {
+    if (apiFormat === "openai" && !MODELS[payload.model]?.channel === "newapi") {
         const convertedPayload = {
             messages: [],
             model: payload.model,
