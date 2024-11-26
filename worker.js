@@ -350,7 +350,7 @@ function mapStopReason(stopReason) {
 }
 
 async function convertPayloadFormat(payload, apiFormat) {
-    if (apiFormat === "openai" && !MODELS[payload.model]?.channel === "newapi") {
+    if (apiFormat === "openai" && MODELS[payload.model]?.channel !== "newapi") {
         const convertedPayload = {
             messages: [],
             model: payload.model,
